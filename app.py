@@ -1,5 +1,6 @@
 import streamlit as st
 import os
+import importlib.util
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -8,29 +9,19 @@ load_dotenv()
 # Page Config
 st.set_page_config(page_title="Museum Alive", page_icon="🏛️")
 st.title("🏛️ Museum Alive: Let Artifacts Speak")
-st.caption("Initializing AI Core... (This may take a moment)")
 
-# --- LAZY LOADING IMPORTS ---
-# We move imports here so the title renders IMMEDIATELY.
+# Check for Vision Libs without loading into memory
+vision_spec = importlib.util.find_spec("torch")
+VISION_AVAILABLE = vision_spec is not None
+
+# Basic Setup (OpenAI/EdgeTTS are light enough to import here)
 try:
     import asyncio
     import edge_tts
     from openai import OpenAI
-    CORE_AVAILABLE = True
 except ImportError as e:
     st.error(f"⚠️ Core libraries failed to load: {e}")
     st.stop()
-
-# --- SAFE VISION IMPORTS ---
-try:
-    import torch
-    from transformers import AutoModelForCausalLM, AutoTokenizer
-    from PIL import Image
-    VISION_AVAILABLE = True
-except ImportError:
-    VISION_AVAILABLE = False
-except Exception:
-    VISION_AVAILABLE = False
 
 # Initialize DeepSeek Client
 try:
@@ -40,7 +31,6 @@ try:
     )
 except Exception as e:
     st.error(f"Failed to initialize AI client: {e}")
-
 
 # Sidebar Settings
 with st.sidebar:
@@ -53,10 +43,10 @@ with st.sidebar:
     
     # Vision Toggle
     if VISION_AVAILABLE:
-        use_vision = st.toggle("Enable AI Vision (Experimental)", value=False, help="Turn this on ONLY if running locally.")
+        use_vision = st.toggle("Enable AI Vision (Experimental)", value=False, help="Turn this on ONLY if running locally or on a powerful server.")
     else:
         use_vision = False
-        st.caption("🚫 Vision unavailable (Libs missing)")
+        st.caption("🚫 Vision unavailable (PyTorch not found)")
 
 # Initialize Vision Model (Lazy Load)
 @st.cache_resource
@@ -64,6 +54,15 @@ def load_vision_model():
     if not VISION_AVAILABLE:
         return None, None
         
+    # --- HEAVY IMPORTS HERE ---
+    # Moved inside function to prevent app crash on startup
+    try:
+        from transformers import AutoModelForCausalLM, AutoTokenizer, AutoConfig
+        from PIL import Image
+    except ImportError:
+        st.error("Vision libraries installed but failed to import.")
+        return None, None
+    
     model_id = "vikhyatk/moondream2"
     revision = "2024-04-02"
     
@@ -71,20 +70,22 @@ def load_vision_model():
     tokenizer = AutoTokenizer.from_pretrained(model_id, revision=revision)
     
     # 2. Patch Config (CRITICAL FIX)
-    from transformers import AutoConfig
-    config = AutoConfig.from_pretrained(model_id, trust_remote_code=True, revision=revision)
-    
-    # Ensure pad_token_id is set
-    if not hasattr(config, 'pad_token_id') or config.pad_token_id is None:
-        config.pad_token_id = tokenizer.pad_token_id
-    
-    # 3. Load Model with Patched Config
-    model = AutoModelForCausalLM.from_pretrained(
-        model_id, 
-        config=config,
-        trust_remote_code=True, 
-        revision=revision
-    )
+    try:
+        config = AutoConfig.from_pretrained(model_id, trust_remote_code=True, revision=revision)
+        # Ensure pad_token_id is set
+        if not hasattr(config, 'pad_token_id') or config.pad_token_id is None:
+            config.pad_token_id = tokenizer.pad_token_id
+        
+        # 3. Load Model with Patched Config
+        model = AutoModelForCausalLM.from_pretrained(
+            model_id, 
+            config=config,
+            trust_remote_code=True, 
+            revision=revision
+        )
+    except Exception as e:
+        st.error(f"Model Load Failed: {e}")
+        return None, None
     
     return model, tokenizer
 
@@ -137,6 +138,11 @@ if uploaded_file is not None:
             with st.spinner("正在加载视觉模型 (第一次可能很慢)..."):
                 try:
                     vision_model, vision_tokenizer = load_vision_model()
+                    if vision_model is None: # Handle lazy load failure
+                         st.error("Failed to load vision model.")
+                         st.stop()
+                         
+                    from PIL import Image # Lazy import for main loop
                     image = Image.open(uploaded_file)
                     with st.spinner("AI 正在观察文物..."):
                         enc_image = vision_model.encode_image(image)
