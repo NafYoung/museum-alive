@@ -1,9 +1,6 @@
 import streamlit as st
 import os
 from dotenv import load_dotenv
-import asyncio
-import edge_tts
-from openai import OpenAI
 
 # Load environment variables
 load_dotenv()
@@ -11,10 +8,20 @@ load_dotenv()
 # Page Config
 st.set_page_config(page_title="Museum Alive", page_icon="🏛️")
 st.title("🏛️ Museum Alive: Let Artifacts Speak")
+st.caption("Initializing AI Core... (This may take a moment)")
 
-# --- SAFE IMPORT SECTION ---
-# Streamlit Cloud free tier might crash on `import torch`. 
-# We wrap this to let the app load even if libs are missing/crashing.
+# --- LAZY LOADING IMPORTS ---
+# We move imports here so the title renders IMMEDIATELY.
+try:
+    import asyncio
+    import edge_tts
+    from openai import OpenAI
+    CORE_AVAILABLE = True
+except ImportError as e:
+    st.error(f"⚠️ Core libraries failed to load: {e}")
+    st.stop()
+
+# --- SAFE VISION IMPORTS ---
 try:
     import torch
     from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -22,16 +29,18 @@ try:
     VISION_AVAILABLE = True
 except ImportError:
     VISION_AVAILABLE = False
-    st.error("⚠️ AI Vision libraries failed to load. Falling back to Text-Only mode.")
-except Exception as e:
+except Exception:
     VISION_AVAILABLE = False
-    # st.warning(f"Note: Vision features disabled due to load error: {e}")
 
 # Initialize DeepSeek Client
-client = OpenAI(
-    api_key=os.getenv("DEEPSEEK_API_KEY"),
-    base_url="https://api.deepseek.com"
-)
+try:
+    client = OpenAI(
+        api_key=os.getenv("DEEPSEEK_API_KEY"),
+        base_url="https://api.deepseek.com"
+    )
+except Exception as e:
+    st.error(f"Failed to initialize AI client: {e}")
+
 
 # Sidebar Settings
 with st.sidebar:
