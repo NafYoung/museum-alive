@@ -1,6 +1,8 @@
 import streamlit as st
 import os
-import importlib.util
+import asyncio
+import edge_tts
+from openai import OpenAI
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -9,28 +11,7 @@ load_dotenv()
 # Page Config
 st.set_page_config(page_title="Museum Alive", page_icon="🏛️")
 st.title("🏛️ Museum Alive: Let Artifacts Speak")
-
-# Check for Vision Libs without loading into memory
-vision_spec = importlib.util.find_spec("torch")
-VISION_AVAILABLE = vision_spec is not None
-
-# Basic Setup (OpenAI/EdgeTTS are light enough to import here)
-try:
-    import asyncio
-    import edge_tts
-    from openai import OpenAI
-except ImportError as e:
-    st.error(f"⚠️ Core libraries failed to load: {e}")
-    st.stop()
-
-# Initialize DeepSeek Client
-try:
-    client = OpenAI(
-        api_key=os.getenv("DEEPSEEK_API_KEY"),
-        base_url="https://api.deepseek.com"
-    )
-except Exception as e:
-    st.error(f"Failed to initialize AI client: {e}")
+st.caption("✨ Cloud Edition: Artifact Storytelling & Voice Synthesis")
 
 # Sidebar Settings
 with st.sidebar:
@@ -41,128 +22,82 @@ with st.sidebar:
     else:
         st.success("✅ API Key Loaded")
     
-    # Vision Toggle
-    if VISION_AVAILABLE:
-        use_vision = st.toggle("Enable AI Vision (Experimental)", value=False, help="Turn this on ONLY if running locally or on a powerful server.")
-    else:
-        use_vision = False
-        st.caption("🚫 Vision unavailable (PyTorch not found)")
+    st.markdown("---")
+    st.info("ℹ️ **Note:** This is the Cloud version. AI Vision is disabled to ensure fast performance. Please manually enter the artifact name.")
 
-# Initialize Vision Model (Lazy Load)
-@st.cache_resource
-def load_vision_model():
-    if not VISION_AVAILABLE:
-        return None, None
-        
-    # --- HEAVY IMPORTS HERE ---
-    # Moved inside function to prevent app crash on startup
-    try:
-        from transformers import AutoModelForCausalLM, AutoTokenizer, AutoConfig
-        from PIL import Image
-    except ImportError:
-        st.error("Vision libraries installed but failed to import.")
-        return None, None
-    
-    model_id = "vikhyatk/moondream2"
-    # revision has been removed to use latest model code which is more compatible
-    
-    # 1. Load Tokenizer FIRST
-    tokenizer = AutoTokenizer.from_pretrained(model_id)
-    
-    # 2. Try loading Model (Simplified approach)
-    try:
-        model = AutoModelForCausalLM.from_pretrained(
-            model_id, 
-            trust_remote_code=True,
-            # Pass pad_token_id directly to avoid config conflicts
-            pad_token_id=tokenizer.vocab_size 
-        )
-    except Exception as e:
-        st.error(f"Model Load Failed: {e}")
-        return None, None
-    
-    return model, tokenizer
+# Initialize DeepSeek Client
+try:
+    client = OpenAI(
+        api_key=api_key,
+        base_url="https://api.deepseek.com"
+    )
+except Exception as e:
+    st.error(f"Failed to initialize AI client: {e}")
+
+# --- Core Functions ---
 
 async def generate_audio(text, output_file="output.mp3"):
     """Generate audio using Edge-TTS (Free)"""
-    communicate = edge_tts.Communicate(text, "zh-CN-YunxiNeural")
-    await communicate.save(output_file)
+    try:
+        # Use a high-quality Chinese voice
+        communicate = edge_tts.Communicate(text, "zh-CN-YunxiNeural")
+        await communicate.save(output_file)
+    except Exception as e:
+        st.error(f"Audio generation failed: {e}")
 
-def get_artifact_story(artifact_description):
-    """Ask DeepSeek to roleplay based on visual description"""
+def get_artifact_story(artifact_name):
+    """Ask DeepSeek to roleplay based on artifact name"""
     prompt = f"""
-    我给你看了一张文物的图片，它的特征是：{artifact_description}。
+    The user is looking at a museum artifact named: "{artifact_name}".
     
-    请你根据这个描述，猜猜你可能是谁（如果特征很明显），或者就作为一个神秘的古物。
-    
-    请用第一人称（“我”）做一个自我介绍。
-    
-    要求：
-    1. 既然是“让文物说话”，语气要符合你的身份。
-    2. 不要只讲枯燥的数据，要讲你的感受。
-    3. 篇幅控制在 150 字以内。
-    4. 开头要吸引人。
+    Please roleplay as this artifact.
+    1. Start with a captivating hook.
+    2. Describe your history and significance in the first person ("I").
+    3. Keep it engaging, educational, and under 150 words.
+    4. Language: Chinese (Mandarin).
     """
     
     try:
         response = client.chat.completions.create(
             model="deepseek-chat",
             messages=[
-                {"role": "system", "content": "你是一个博物馆里的文物，富有性格和情感。"},
+                {"role": "system", "content": "You are a sentient museum artifact with a distinct personality."},
                 {"role": "user", "content": prompt},
             ],
             stream=False
         )
         return response.choices[0].message.content
     except Exception as e:
-        return f"哎呀，我看不清自己... ({str(e)})"
+        return f"I am unable to speak right now... (Error: {str(e)})"
 
-# Main Content
-st.write("Upload a photo of an artifact, and AI will bring it to life.")
-uploaded_file = st.file_uploader("📸 给他拍张照 (或上传图片)", type=["jpg", "png", "jpeg"])
+# --- Main UI ---
 
-if uploaded_file is not None:
-    st.image(uploaded_file, caption="已上传文物", use_container_width=True)
-    
-    artifact_description = ""
-    
-    # Logic Branch: Vision vs Manual
-    if use_vision:
-        if st.button("👁️ AI 识图并说话"):
-            with st.spinner("正在加载视觉模型 (第一次可能很慢)..."):
-                try:
-                    vision_model, vision_tokenizer = load_vision_model()
-                    if vision_model is None: # Handle lazy load failure
-                         st.error("Failed to load vision model.")
-                         st.stop()
-                         
-                    from PIL import Image # Lazy import for main loop
-                    image = Image.open(uploaded_file)
-                    with st.spinner("AI 正在观察文物..."):
-                        enc_image = vision_model.encode_image(image)
-                        artifact_description = vision_model.answer_question(enc_image, "Describe this artifact in detail.", vision_tokenizer)
-                        st.info(f"👀 AI 看到的：{artifact_description}")
-                except Exception as e:
-                    st.error(f"视觉模型加载失败 (可能是内存不足): {e}")
-                    st.stop()
+# 1. Image Upload (Display Only)
+uploaded_file = st.file_uploader("📸 Upload Artifact Photo (Optional)", type=["jpg", "png", "jpeg"])
+if uploaded_file:
+    st.image(uploaded_file, caption="Artifact Preview", use_container_width=True)
+
+# 2. Input
+artifact_name = st.text_input("💡 What is this artifact?", placeholder="e.g., Bronze Mask of Sanxingdui / 三星堆青铜面具")
+
+# 3. Action
+if artifact_name and st.button("Let it Speak 🗣️"):
+    if not api_key:
+        st.error("Please configure your API Key first!")
     else:
-        artifact_description = st.text_input("💡 (省流版) 告诉我它的名字/特征：", placeholder="比如：三星堆青铜面具")
-        if artifact_description and st.button("让它说话 🗣️"):
-             pass # Trigger next block
-
-    # Generate Story & Audio (Common Logic)
-    if artifact_description:
-         with st.spinner("正在唤醒沉睡的灵魂..."):
-            # 2. Generate Story
-            story = get_artifact_story(artifact_description)
-            st.markdown(f"### 📜 文物的自述")
-            st.write(story)
+        with st.spinner("The artifact is waking up..."):
+            # A. Generate Story
+            story = get_artifact_story(artifact_name)
             
-            # 3. Generate Audio
+            # Display Story
+            st.markdown("### 📜 The Artifact Says:")
+            # Use a nice container for the text
+            st.info(story)
+            
+            # B. Generate & Play Audio
             output_file = "artifact_voice.mp3"
             asyncio.run(generate_audio(story, output_file))
             
-            # 4. Play Audio
-            st.audio(output_file)
-            if not use_vision:
-                st.success("🎉 唤醒成功！(这是省流版，本地开启 Vision 可体验全自动)")
+            if os.path.exists(output_file):
+                st.audio(output_file)
+                st.success("🎉 Voice generated successfully!")
