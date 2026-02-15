@@ -64,24 +64,18 @@ def load_vision_model():
         return None, None
     
     model_id = "vikhyatk/moondream2"
-    revision = "2024-04-02"
+    # revision has been removed to use latest model code which is more compatible
     
     # 1. Load Tokenizer FIRST
-    tokenizer = AutoTokenizer.from_pretrained(model_id, revision=revision)
+    tokenizer = AutoTokenizer.from_pretrained(model_id)
     
-    # 2. Patch Config (CRITICAL FIX)
+    # 2. Try loading Model (Simplified approach)
     try:
-        config = AutoConfig.from_pretrained(model_id, trust_remote_code=True, revision=revision)
-        # Ensure pad_token_id is set
-        if not hasattr(config, 'pad_token_id') or config.pad_token_id is None:
-            config.pad_token_id = tokenizer.pad_token_id
-        
-        # 3. Load Model with Patched Config
         model = AutoModelForCausalLM.from_pretrained(
             model_id, 
-            config=config,
-            trust_remote_code=True, 
-            revision=revision
+            trust_remote_code=True,
+            # Pass pad_token_id directly to avoid config conflicts
+            pad_token_id=tokenizer.vocab_size 
         )
     except Exception as e:
         st.error(f"Model Load Failed: {e}")
