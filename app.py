@@ -61,15 +61,22 @@ def load_vision_model():
     # 1. Load Tokenizer FIRST
     tokenizer = AutoTokenizer.from_pretrained(model_id, revision=revision)
     
-    # 2. Load Model
+    # 2. Patch Config (CRITICAL FIX)
+    from transformers import AutoConfig
+    config = AutoConfig.from_pretrained(model_id, trust_remote_code=True, revision=revision)
+    
+    # Ensure pad_token_id is set
+    if not hasattr(config, 'pad_token_id') or config.pad_token_id is None:
+        config.pad_token_id = tokenizer.pad_token_id
+    
+    # 3. Load Model with Patched Config
     model = AutoModelForCausalLM.from_pretrained(
-        model_id, trust_remote_code=True, revision=revision
+        model_id, 
+        config=config,
+        trust_remote_code=True, 
+        revision=revision
     )
     
-    # 3. Apply Patch
-    if not hasattr(model.config, 'pad_token_id'):
-        model.config.pad_token_id = tokenizer.pad_token_id
-        
     return model, tokenizer
 
 async def generate_audio(text, output_file="output.mp3"):
