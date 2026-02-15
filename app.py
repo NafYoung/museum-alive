@@ -62,6 +62,40 @@ def load_vision_model():
     tokenizer = AutoTokenizer.from_pretrained(model_id, revision=revision)
     return model, tokenizer
 
+async def generate_audio(text, output_file="output.mp3"):
+    """Generate audio using Edge-TTS (Free)"""
+    communicate = edge_tts.Communicate(text, "zh-CN-YunxiNeural")
+    await communicate.save(output_file)
+
+def get_artifact_story(artifact_description):
+    """Ask DeepSeek to roleplay based on visual description"""
+    prompt = f"""
+    我给你看了一张文物的图片，它的特征是：{artifact_description}。
+    
+    请你根据这个描述，猜猜你可能是谁（如果特征很明显），或者就作为一个神秘的古物。
+    
+    请用第一人称（“我”）做一个自我介绍。
+    
+    要求：
+    1. 既然是“让文物说话”，语气要符合你的身份。
+    2. 不要只讲枯燥的数据，要讲你的感受。
+    3. 篇幅控制在 150 字以内。
+    4. 开头要吸引人。
+    """
+    
+    try:
+        response = client.chat.completions.create(
+            model="deepseek-chat",
+            messages=[
+                {"role": "system", "content": "你是一个博物馆里的文物，富有性格和情感。"},
+                {"role": "user", "content": prompt},
+            ],
+            stream=False
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        return f"哎呀，我看不清自己... ({str(e)})"
+
 # Main Content
 st.write("Upload a photo of an artifact, and AI will bring it to life.")
 uploaded_file = st.file_uploader("📸 给他拍张照 (或上传图片)", type=["jpg", "png", "jpeg"])
