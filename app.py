@@ -1,33 +1,31 @@
 import streamlit as st
 import os
 from dotenv import load_dotenv
+import asyncio
+import edge_tts
+from openai import OpenAI
 
 # Load environment variables
 load_dotenv()
 
 # Page Config
 st.set_page_config(page_title="Museum Alive", page_icon="🏛️")
-
-# Title and Description
 st.title("🏛️ Museum Alive: Let Artifacts Speak")
-st.write("Upload a photo of an artifact, and AI will bring it to life.")
 
-# Sidebar for Settings
-with st.sidebar:
-    st.header("Settings")
-    api_key = os.getenv("DEEPSEEK_API_KEY")
-    if not api_key or "your-key-here" in api_key:
-        st.warning("⚠️ Please set your DEEPSEEK_API_KEY in the .env file.")
-    else:
-        st.success("✅ API Key Loaded")
-
-import asyncio
-import edge_tts
-from openai import OpenAI
-
-import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer
-from PIL import Image
+# --- SAFE IMPORT SECTION ---
+# Streamlit Cloud free tier might crash on `import torch`. 
+# We wrap this to let the app load even if libs are missing/crashing.
+try:
+    import torch
+    from transformers import AutoModelForCausalLM, AutoTokenizer
+    from PIL import Image
+    VISION_AVAILABLE = True
+except ImportError:
+    VISION_AVAILABLE = False
+    st.error("⚠️ AI Vision libraries failed to load. Falling back to Text-Only mode.")
+except Exception as e:
+    VISION_AVAILABLE = False
+    # st.warning(f"Note: Vision features disabled due to load error: {e}")
 
 # Initialize DeepSeek Client
 client = OpenAI(
@@ -44,22 +42,34 @@ with st.sidebar:
     else:
         st.success("✅ API Key Loaded")
     
-    # Vision Toggle (Default OFF to save Cloud resources)
-    use_vision = st.toggle("Enable AI Vision (Experimental)", value=False, help="Turn this on ONLY if running locally. Streamlit Cloud may crash due to memory limits.")
+    # Vision Toggle
+    if VISION_AVAILABLE:
+        use_vision = st.toggle("Enable AI Vision (Experimental)", value=False, help="Turn this on ONLY if running locally.")
+    else:
+        use_vision = False
+        st.caption("🚫 Vision unavailable (Libs missing)")
 
 # Initialize Vision Model (Lazy Load)
 @st.cache_resource
 def load_vision_model():
+    if not VISION_AVAILABLE:
+        return None, None
+        
     model_id = "vikhyatk/moondream2"
     revision = "2024-04-02"
+    
+    # 1. Load Tokenizer FIRST
+    tokenizer = AutoTokenizer.from_pretrained(model_id, revision=revision)
+    
+    # 2. Load Model
     model = AutoModelForCausalLM.from_pretrained(
         model_id, trust_remote_code=True, revision=revision
     )
-    # MANUALLY PATCH CONFIG TO FIX 'pad_token_id' ERROR
+    
+    # 3. Apply Patch
     if not hasattr(model.config, 'pad_token_id'):
         model.config.pad_token_id = tokenizer.pad_token_id
         
-    tokenizer = AutoTokenizer.from_pretrained(model_id, revision=revision)
     return model, tokenizer
 
 async def generate_audio(text, output_file="output.mp3"):
