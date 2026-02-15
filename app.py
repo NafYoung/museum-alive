@@ -55,6 +55,10 @@ def load_vision_model():
     model = AutoModelForCausalLM.from_pretrained(
         model_id, trust_remote_code=True, revision=revision
     )
+    # MANUALLY PATCH CONFIG TO FIX 'pad_token_id' ERROR
+    if not hasattr(model.config, 'pad_token_id'):
+        model.config.pad_token_id = tokenizer.pad_token_id
+        
     tokenizer = AutoTokenizer.from_pretrained(model_id, revision=revision)
     return model, tokenizer
 
